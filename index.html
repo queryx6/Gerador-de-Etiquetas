@@ -1,0 +1,270 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerador de Etiquetas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+        <h1 class="text-2xl font-bold mb-4 text-center">Configurar Etiquetas</h1>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Largura da Etiqueta (cm):</label>
+                <input id="labelWidth" type="number" step="0.1" value="10" class="mt-1 block w-full border border-gray-300 rounded-md p-2" required>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Altura da Etiqueta (cm):</label>
+                <input id="labelHeight" type="number" step="0.1" value="1" class="mt-1 block w-full border border-gray-300 rounded-md p-2" required>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Fonte:</label>
+                <select id="fontName" class="mt-1 block w-full border border-gray-300 rounded-md p-2">
+                    <option value="HammersmithOne">HammersmithOne</option>
+                    <option value="Helvetica">Helvetica</option>
+                    <option value="Times-Roman">Times-Roman</option>
+                    <option value="Courier">Courier</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Tamanho Máximo da Fonte (pt):</label>
+                <input id="maxFontSize" type="number" step="0.5" value="18" class="mt-1 block w-full border border-gray-300 rounded-md p-2" required>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Tamanho Mínimo da Fonte (pt):</label>
+                <input id="minFontSize" type="number" step="0.5" value="8" class="mt-1 block w-full border border-gray-300 rounded-md p-2" required>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Arquivo Excel:</label>
+                <input id="inputFile" type="text" value="ETIQUETA CATÁLOGO RELLER.xlsx" class="mt-1 block w-full border border-gray-300 rounded-md p-2" required>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Pasta de Saída:</label>
+                <input id="outputFolder" type="text" value="etiquetas_geradas" class="mt-1 block w-full border border-gray-300 rounded-md p-2" required>
+            </div>
+            <button onclick="generatePythonScript()" class="w-full bg-blue-500 text-white p-2 rounded-md hover:bg-blue-600">Gerar Script Python</button>
+        </div>
+        <div id="output" class="mt-4 hidden">
+            <h2 class="text-lg font-semibold">Script Gerado</h2>
+            <pre id="codeOutput" class="bg-gray-800 text-white p-4 rounded-md overflow-auto max-h-96"></pre>
+            <button onclick="copyToClipboard()" class="mt-2 bg-green-500 text-white p-2 rounded-md hover:bg-green-600">Copiar Script</button>
+        </div>
+    </div>
+
+    <script>
+        function generatePythonScript() {
+            const labelWidth = document.getElementById('labelWidth').value;
+            const labelHeight = document.getElementById('labelHeight').value;
+            const fontName = document.getElementById('fontName').value;
+            const maxFontSize = document.getElementById('maxFontSize').value;
+            const minFontSize = document.getElementById('minFontSize').value;
+            const inputFile = document.getElementById('inputFile').value;
+            const outputFolder = document.getElementById('outputFolder').value;
+
+            const pythonScript = `
+import openpyxl
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
+import os
+
+def generate_labels(input_file, output_folder):
+    wb = openpyxl.load_workbook(input_file)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    page_width, page_height = A4
+    margin = 10 * mm
+    safe_margin = 3 * mm
+
+    label_width = ${labelWidth}
+    label_height = ${labelHeight}
+    label_width_mm = (label_width - 0.5) * 10  # Subtrai 0,5 cm (5 mm) da largura
+    label_height_mm = label_height * 10
+
+    # Decide se cabe 2 colunas ou só 1
+    if (page_width - 2 * margin) >= (2 * label_width_mm * mm + 10 * mm):
+        labels_per_row = 2
+        column_gap = (page_width - 2 * margin - 2 * label_width_mm * mm) / 3
+    else:
+        labels_per_row = 1
+        column_gap = (page_width - label_width_mm * mm) / 2 - margin
+
+    rows_per_page = int((page_height - 2 * margin) // (label_height_mm * mm))
+    labels_per_page = labels_per_row * rows_per_page
+
+    output_file = os.path.join(output_folder, f"Etiquetas_${labelWidth}x${labelHeight}.pdf")
+    c = canvas.Canvas(output_file, pagesize=A4)
+
+    # Coleta todas as etiquetas
+    etiquetas = []
+    for sheet in wb.worksheets:
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if len(row) < 3 or not row[0]:
+                continue
+            descricao = str(row[0])
+            qtde = int(row[2]) if row[2] else 1
+            for _ in range(qtde):
+                etiquetas.append(descricao)
+
+    total_pages = (len(etiquetas) // labels_per_page) + (1 if len(etiquetas) % labels_per_page > 0 else 0)
+
+    for page in range(total_pages):
+        # Marcas de corte no topo da página
+        tracinho_altura = 10
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(1)
+        for col in range(labels_per_row):
+            x_left = margin + column_gap + col * (label_width_mm * mm + column_gap)
+            x_right = x_left + label_width_mm * mm
+            y_topo = page_height - margin
+            c.line(x_left, y_topo, x_left, y_topo + tracinho_altura)
+            c.line(x_right, y_topo, x_right, y_topo + tracinho_altura)
+
+        # Desenha as etiquetas da página
+        for idx in range(labels_per_page):
+            etq_idx = page * labels_per_page + idx
+            if etq_idx >= len(etiquetas):
+                continue
+            row_pos = idx // labels_per_row
+            col_pos = idx % labels_per_row
+            x = margin + column_gap + col_pos * (label_width_mm * mm + column_gap)
+            y = page_height - margin - (row_pos + 1) * label_height_mm * mm
+
+            # Marcas de corte nas etiquetas
+            mark_length = 5 * mm
+            c.line(x, y + label_height_mm * mm, x - mark_length, y + label_height_mm * mm)
+            c.line(x + label_width_mm * mm, y + label_height_mm * mm, x + label_width_mm * mm + mark_length, y + label_height_mm * mm)
+            c.line(x, y, x - mark_length, y)
+            c.line(x + label_width_mm * mm, y, x + label_width_mm * mm + mark_length, y)
+
+            # Texto centralizado, sem ultrapassar
+            descricao = etiquetas[etq_idx].upper()
+            font_name = "${fontName}"
+            max_font_size = ${maxFontSize}
+            min_font_size = ${minFontSize}
+            font_size = max_font_size
+
+            c.setFont(font_name, font_size)
+            max_width = label_width_mm * mm - 2 * safe_margin
+            words = descricao.split()
+            lines = []
+            current_line = []
+            for word in words:
+                test_line = ' '.join(current_line + [word])
+                if c.stringWidth(test_line, font_name, font_size) <= max_width:
+                    current_line.append(word)
+                else:
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                    current_line = [word]
+            if current_line:
+                lines.append(' '.join(current_line))
+
+            while (len(lines) * font_size * 1.2 > label_height_mm * mm - 2 * safe_margin or
+                   max([c.stringWidth(line, font_name, font_size) for line in lines]) > max_width) and font_size > min_font_size:
+                font_size -= 0.5
+                c.setFont(font_name, font_size)
+                lines = []
+                current_line = []
+                for word in words:
+                    test_line = ' '.join(current_line + [word])
+                    if c.stringWidth(test_line, font_name, font_size) <= max_width:
+                        current_line.append(word)
+                    else:
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                        current_line = [word]
+                if current_line:
+                    lines.append(' '.join(current_line))
+
+            if (len(lines) * font_size * 1.2 > label_height_mm * mm - 2 * safe_margin or
+                max([c.stringWidth(line, font_name, font_size) for line in lines]) > max_width):
+                last_line = lines[-1]
+                while c.stringWidth(last_line + "...", font_name, font_size) > max_width and len(last_line) > 0:
+                    last_line = last_line[:-1]
+                lines[-1] = last_line + "..."
+
+            total_text_height = len(lines) * font_size * 1.2
+            y_text = y + (label_height_mm * mm + total_text_height) / 2 - font_size
+
+            c.setFont(font_name, font_size)
+            for i, line in enumerate(lines):
+                line_width = c.stringWidth(line, font_name, font_size)
+                c.drawString(
+                    x + (label_width_mm * mm - line_width) / 2,
+                    y_text - i * font_size * 1.2,
+                    line
+                )
+
+        c.showPage()
+
+    c.save()
+    print(f"Arquivo gerado: {output_file}")
+
+if __name__ == "__main__":
+    input_file = "${inputFile}"
+    output_folder = "${outputFolder}"
+    pdfmetrics.registerFont(TTFont('HammersmithOne', 'HammersmithOne.ttf') if "${fontName}" == "HammersmithOne" else TTFont("${fontName}", "${fontName}.ttf"))
+    generate_labels(input_file, output_folder)
+            `;
+
+            const outputDiv = document.getElementById('output');
+            const codeOutput = document.getElementById('codeOutput');
+            codeOutput.textContent = pythonScript;
+            outputDiv.classList.remove('hidden');
+        }
+
+        function copyToClipboard() {
+            const codeOutput = document.getElementById('codeOutput').textContent;
+            navigator.clipboard.writeText(codeOutput).then(() => {
+                alert('Script copiado para a área de transferência!');
+            }).catch(err => {
+                alert('Erro ao copiar o script: ' + err);
+            });
+        }
+    </script>
+</body>
+</html>
